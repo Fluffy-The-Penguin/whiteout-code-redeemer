@@ -13,6 +13,7 @@ const {
   updateGiftCodeStatus,
   upsertGiftCode
 } = require('./storage');
+const { redeemProgressEmbed, redeemStartEmbed, redeemSummaryEmbed } = require('./ui');
 
 const ABORT_STATUSES = new Set(['USED', 'TIME ERROR', 'CDK NOT FOUND']);
 const SUCCESS_OR_ACCEPTED = new Set(['SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE']);
@@ -66,6 +67,8 @@ function buildSummary(source, code, results, skippedBefore, abortedStatus) {
     successCount,
     processed,
     skipped,
+    statusCounts,
+    recentLines: results.slice(-30).map(summarizeResult),
     text:
       `Finished ${source} redeem for \`${code}\`.\n` +
       `Accepted/successful: ${successCount}\n` +
@@ -99,7 +102,7 @@ async function getNotificationChannel(client, guildId) {
 
 async function editProgress(progressMessage, code, processed, total, skipped) {
   if (!progressMessage || processed % 5 !== 0) return;
-  await progressMessage.edit(`Redeeming \`${code}\`: ${processed}/${total} processed, ${skipped} skipped existing...`).catch(() => null);
+  await progressMessage.edit({ embeds: [redeemProgressEmbed({ code, processed, total, skipped })] }).catch(() => null);
 }
 
 async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
@@ -127,10 +130,9 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
 
   let progressMessage = null;
   if (channel) {
-    const prefix = source === 'auto' ? 'New gift code found' : source === 'gift-channel' ? 'Gift code posted' : 'Manual redeem started';
-    progressMessage = await channel.send(
-      `${prefix}: \`${code}\`. Redeeming for ${pendingPlayers.length}/${players.length} pending player(s). ${skippedBefore} already recorded.`
-    );
+    progressMessage = await channel.send({
+      embeds: [redeemStartEmbed({ source, code, pending: pendingPlayers.length, total: players.length, skipped: skippedBefore })]
+    });
   }
 
   const results = [];
@@ -187,10 +189,19 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
   });
 
   if (progressMessage) {
-    await progressMessage.edit(summary.text.slice(0, 1900)).catch(() => null);
-    if (summary.text.length > 1900) {
-      await sendLong(channel, summary.text.slice(1900));
-    }
+    await progressMessage.edit({
+      embeds: [redeemSummaryEmbed({
+        source,
+        code,
+        total: players.length,
+        processed: summary.processed,
+        skipped: summary.skipped,
+        successCount: summary.successCount,
+        abortedStatus,
+        statusCounts: summary.statusCounts,
+        recentLines: summary.recentLines
+      })]
+    }).catch(() => null);
   } else if (channel) {
     await sendLong(channel, summary.text);
   }

@@ -6,6 +6,7 @@ const { redeemCodeForGuild, startWatcher } = require('./autoRedeemer');
 const { deployGlobalCommands } = require('./deployCommands');
 const { getFurnaceLabel } = require('./furnaceReadable');
 const { fetchPlayerInfo } = require('./redeem');
+const { channelStatus, errorEmbed, infoEmbed, listOrNone, successEmbed, warningEmbed } = require('./ui');
 const {
   addPlayer,
   getConfiguredGuilds,
@@ -23,13 +24,16 @@ const {
 
 function requireManageGuild(interaction) {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-    return interaction.reply({ content: 'You need Manage Server permission to use this bot.', ephemeral: true });
+    return interaction.reply({
+      embeds: [errorEmbed('Permission Required', 'You need **Manage Server** permission to use this bot.')],
+      ephemeral: true
+    });
   }
   return null;
 }
 
 function formatPlayers(players) {
-  if (players.length === 0) return 'No players saved yet.';
+  if (players.length === 0) return [];
   return players
     .map((player, index) => {
       const name = player.nickname || player.label || '';
@@ -56,7 +60,7 @@ function extractPlayerIds(content) {
 async function handleInteraction(interaction) {
   if (!interaction.isChatInputCommand()) return;
   if (!interaction.guildId) {
-    await interaction.reply({ content: 'Use this bot inside a server.', ephemeral: true });
+    await interaction.reply({ embeds: [warningEmbed('Server Only', 'Use this bot inside a Discord server.')], ephemeral: true });
     return;
   }
 
@@ -68,7 +72,7 @@ async function handleInteraction(interaction) {
     const label = interaction.options.getString('label') || '';
 
     if (!/^\d+$/.test(fid)) {
-      await interaction.reply({ content: 'FID must contain numbers only.', ephemeral: true });
+      await interaction.reply({ embeds: [errorEmbed('Invalid Player ID', 'FID must contain numbers only.')], ephemeral: true });
       return;
     }
 
@@ -76,54 +80,93 @@ async function handleInteraction(interaction) {
     const info = await fetchPlayerInfo(fid);
 
     if (!info.success) {
-      await interaction.editReply(`Could not add \`${fid}\`: ${info.status} - ${info.message}`);
+      await interaction.editReply({
+        embeds: [errorEmbed('Player Not Added', `Could not add \`${fid}\`.`, [
+          { name: 'Status', value: info.status || 'Unknown', inline: true },
+          { name: 'Message', value: info.message || 'No details', inline: false }
+        ])]
+      });
       return;
     }
 
     const { created } = addPlayer(interaction.guildId, fid, label || info.nickname, info);
-    await interaction.editReply(
-      `${created ? 'Added' : 'Updated'} player \`${fid}\`: ${info.nickname}, ${getFurnaceLabel(info.stoveLv)}.`
-    );
+    await interaction.editReply({
+      embeds: [successEmbed(created ? 'Player Added' : 'Player Updated', `Saved \`${fid}\` for automatic gift-code redemption.`, [
+        { name: 'Nickname', value: info.nickname || 'Unknown', inline: true },
+        { name: 'Level', value: getFurnaceLabel(info.stoveLv), inline: true },
+        { name: 'Label', value: label || info.nickname || 'None', inline: true }
+      ])]
+    });
     return;
   }
 
   if (interaction.commandName === 'player-remove') {
     const fid = interaction.options.getString('fid', true).trim();
     const removed = removePlayer(interaction.guildId, fid);
-    await interaction.reply({ content: removed ? `Removed player \`${fid}\`.` : `Player \`${fid}\` was not saved.`, ephemeral: true });
+    await interaction.reply({
+      embeds: [removed
+        ? successEmbed('Player Removed', `Removed \`${fid}\` from automatic redemption.`)
+        : warningEmbed('Player Not Found', `Player \`${fid}\` was not saved.`)
+      ],
+      ephemeral: true
+    });
     return;
   }
 
   if (interaction.commandName === 'players') {
-    await interaction.reply({ content: formatPlayers(listPlayers(interaction.guildId)), ephemeral: true });
+    const players = formatPlayers(listPlayers(interaction.guildId));
+    await interaction.reply({
+      embeds: [infoEmbed('Saved Players', players.length === 0 ? 'No players saved yet.' : `These players are used for automatic redemption.`, [
+        { name: `Players (${players.length})`, value: listOrNone(players, 20), inline: false }
+      ])],
+      ephemeral: true
+    });
     return;
   }
 
   if (interaction.commandName === 'channel-set') {
     setNotifyChannel(interaction.guildId, interaction.channelId);
-    await interaction.reply({ content: `Auto-redeem notifications will be posted in ${interaction.channel}.`, ephemeral: true });
+    await interaction.reply({
+      embeds: [successEmbed('Notification Channel Set', `Auto-redeem results will be posted in ${interaction.channel}.`)],
+      ephemeral: true
+    });
     return;
   }
 
   if (interaction.commandName === 'gift-channel-set') {
     setGiftChannel(interaction.guildId, interaction.channelId);
-    await interaction.reply({ content: `Gift codes posted in ${interaction.channel} will be auto-redeemed for saved players.`, ephemeral: true });
+    await interaction.reply({
+      embeds: [successEmbed('Gift-Code Channel Set', `Gift codes posted in ${interaction.channel} will be detected and redeemed automatically.`, [
+        { name: 'Accepted Examples', value: '`gogoWOS`\n`Code: gogoWOS`', inline: false }
+      ])],
+      ephemeral: true
+    });
     return;
   }
 
   if (interaction.commandName === 'id-channel-set') {
     setIdChannel(interaction.guildId, interaction.channelId);
-    await interaction.reply({ content: `Player IDs posted in ${interaction.channel} will be validated and saved automatically.`, ephemeral: true });
+    await interaction.reply({
+      embeds: [successEmbed('ID Channel Set', `Player IDs posted in ${interaction.channel} will be validated and saved automatically.`, [
+        { name: 'Accepted Examples', value: '`12345678`\n`12345678 87654321`\n`IDs: 12345678, 87654321`', inline: false }
+      ])],
+      ephemeral: true
+    });
     return;
   }
 
   if (interaction.commandName === 'codes') {
     await interaction.deferReply({ ephemeral: true });
     const { codes, invalid, fetchedAt } = await fetchGiftCodes();
-    const text = codes.length === 0
-      ? 'No codes found.'
-      : codes.map((code) => `\`${code.code}\` - ${code.date}`).join('\n');
-    await interaction.editReply(`Fetched at ${fetchedAt}. ${codes.length} code(s), ${invalid.length} invalid line(s).\n${text}`);
+    const lines = codes.map((code) => `\`${code.code}\` - ${code.date}`);
+    await interaction.editReply({
+      embeds: [infoEmbed('Fetched Gift Codes', `Fetched from the shared code API.`, [
+        { name: 'Fetched At', value: fetchedAt, inline: false },
+        { name: 'Valid Codes', value: String(codes.length), inline: true },
+        { name: 'Invalid Lines', value: String(invalid.length), inline: true },
+        { name: 'Codes', value: listOrNone(lines, 20), inline: false }
+      ])]
+    });
     return;
   }
 
@@ -131,13 +174,20 @@ async function handleInteraction(interaction) {
     const code = interaction.options.getString('code', true).trim();
     const players = listPlayers(interaction.guildId);
     if (players.length === 0) {
-      await interaction.reply({ content: 'No players saved. Add players with `/player-add` first.', ephemeral: true });
+      await interaction.reply({ embeds: [warningEmbed('No Players Saved', 'Add players with `/player-add` or configure `/id-channel-set` first.')], ephemeral: true });
       return;
     }
 
     await interaction.deferReply({ ephemeral: true });
     const summary = await redeemCodeForGuild(interaction.client, interaction.guildId, { code, date: new Date().toISOString().slice(0, 10) }, 'manual');
-    await interaction.editReply(`Finished manual redeem for \`${code}\`: ${summary.successCount}/${summary.total} successful/accepted. Full results are posted in the configured notification channel if set.`);
+    await interaction.editReply({
+      embeds: [successEmbed('Manual Redeem Complete', `Finished redeeming \`${code}\`.`, [
+        { name: 'Accepted/Successful', value: String(summary.successCount), inline: true },
+        { name: 'Saved Players', value: String(summary.total), inline: true },
+        { name: 'Skipped Existing', value: String(summary.skipped), inline: true },
+        { name: 'Results', value: 'Full results are posted in the configured notification channel if set.', inline: false }
+      ])]
+    });
     return;
   }
 
@@ -148,14 +198,14 @@ async function handleInteraction(interaction) {
     const giftChannel = getGiftChannel(interaction.guildId);
     const idChannel = getIdChannel(interaction.guildId);
     await interaction.reply({
-      content:
-        `Watcher is running.\n` +
-        `Players in this server: ${players.length}\n` +
-        `Stored seen codes: ${stats.seenCodes}\n` +
-        `Usage records for this server: ${stats.usage}\n` +
-        `Configured guilds: ${guilds.length}\n` +
-        `Gift-code channel: ${giftChannel ? `<#${giftChannel}>` : 'not set'}\n` +
-        `ID channel: ${idChannel ? `<#${idChannel}>` : 'not set'}`,
+      embeds: [infoEmbed('Watcher Status', 'Automatic code watching is active.', [
+        { name: 'Players', value: String(players.length), inline: true },
+        { name: 'Seen Codes', value: String(stats.seenCodes), inline: true },
+        { name: 'Usage Records', value: String(stats.usage), inline: true },
+        { name: 'Configured Servers', value: String(guilds.length), inline: true },
+        { name: 'Gift-Code Channel', value: channelStatus(giftChannel), inline: true },
+        { name: 'ID Channel', value: channelStatus(idChannel), inline: true }
+      ])],
       ephemeral: true
     });
   }
@@ -163,7 +213,11 @@ async function handleInteraction(interaction) {
 
 async function editIdProgress(progressMessage, processed, total) {
   if (!progressMessage || processed % 5 !== 0) return;
-  await progressMessage.edit(`Checking player IDs: ${processed}/${total} processed...`).catch(() => null);
+  await progressMessage.edit({
+    embeds: [infoEmbed('Checking Player IDs', 'Validating IDs with the Whiteout Survival API.', [
+      { name: 'Progress', value: `${processed}/${total}`, inline: true }
+    ])]
+  }).catch(() => null);
 }
 
 async function handleIdChannelMessage(message) {
@@ -175,7 +229,12 @@ async function handleIdChannelMessage(message) {
   const ids = extractPlayerIds(message.content);
   if (ids.length === 0) return true;
 
-  const progressMessage = await message.reply(`Checking ${ids.length} player ID(s)...`).catch(() => null);
+  const progressMessage = await message.reply({
+    embeds: [infoEmbed('Checking Player IDs', 'Validating IDs with the Whiteout Survival API.', [
+      { name: 'Detected IDs', value: String(ids.length), inline: true },
+      { name: 'Limit', value: '30 per message', inline: true }
+    ])]
+  }).catch(() => null);
   const added = [];
   const updated = [];
   const failed = [];
@@ -198,19 +257,19 @@ async function handleIdChannelMessage(message) {
     await editIdProgress(progressMessage, added.length + updated.length + failed.length, ids.length);
   }
 
-  const summary =
-    `Finished checking player IDs.\n` +
-    `Added: ${added.length}\n` +
-    `Updated: ${updated.length}\n` +
-    `Failed: ${failed.length}\n\n` +
-    `${added.length ? `Added:\n${added.slice(0, 15).join('\n')}\n\n` : ''}` +
-    `${updated.length ? `Updated:\n${updated.slice(0, 15).join('\n')}\n\n` : ''}` +
-    `${failed.length ? `Failed:\n${failed.slice(0, 15).join('\n')}` : ''}`;
+  const summaryEmbed = successEmbed('Player Intake Complete', 'Finished checking player IDs from this message.', [
+    { name: 'Added', value: String(added.length), inline: true },
+    { name: 'Updated', value: String(updated.length), inline: true },
+    { name: 'Failed', value: String(failed.length), inline: true },
+    { name: 'Added Players', value: listOrNone(added, 10), inline: false },
+    { name: 'Updated Players', value: listOrNone(updated, 10), inline: false },
+    { name: 'Failed IDs', value: listOrNone(failed, 10), inline: false }
+  ]);
 
   if (progressMessage) {
-    await progressMessage.edit(summary.slice(0, 1900)).catch(() => null);
+    await progressMessage.edit({ embeds: [summaryEmbed] }).catch(() => null);
   } else {
-    await message.reply(summary.slice(0, 1900)).catch(() => null);
+    await message.reply({ embeds: [summaryEmbed] }).catch(() => null);
   }
 
   return true;
@@ -227,7 +286,7 @@ async function handleGiftCodeMessage(message) {
 
   const players = listPlayers(message.guildId);
   if (players.length === 0) {
-    await message.reply('Gift code detected, but no players are saved. Add players with `/player-add` first.').catch(() => null);
+    await message.reply({ embeds: [warningEmbed('Gift Code Detected', 'No players are saved yet. Add players with `/player-add` or configure `/id-channel-set` first.')] }).catch(() => null);
     return;
   }
 
@@ -266,11 +325,11 @@ async function startBot(options = {}) {
   client.on('interactionCreate', (interaction) => {
     handleInteraction(interaction).catch(async (error) => {
       console.error(error);
-      const message = `Error: ${error.message}`;
+      const payload = { embeds: [errorEmbed('Unexpected Error', error.message || 'Unknown error')] };
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(message).catch(() => null);
+        await interaction.editReply(payload).catch(() => null);
       } else {
-        await interaction.reply({ content: message, ephemeral: true }).catch(() => null);
+        await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
       }
     });
   });
