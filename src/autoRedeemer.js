@@ -5,9 +5,17 @@ const {
   getConfiguredGuilds,
   getNotifyChannel,
   getSeenCodes,
+  getUsageStats,
+  hasGiftCodeUsage,
   listPlayers,
-  markCodesSeen
+  markCodesSeen,
+  recordGiftCodeUsage,
+  updateGiftCodeStatus,
+  upsertGiftCode
 } = require('./storage');
+
+const ABORT_STATUSES = new Set(['USED', 'TIME ERROR', 'CDK NOT FOUND']);
+const SUCCESS_OR_ACCEPTED = new Set(['SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE']);
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,9 +27,54 @@ function randomIntervalMs() {
   return Math.floor(Math.random() * (Math.max(min, max) - Math.min(min, max) + 1)) + Math.min(min, max);
 }
 
-function summarizeResult(result) {
-  const player = result.player?.nickname ? `${result.player.nickname} (${result.player.fid})` : result.player?.fid || 'unknown';
-  return `${player}: ${result.status || 'UNKNOWN'}${result.message ? ` (${result.message})` : ''}`;
+function resultPlayerLabel(entry) {
+  const result = entry.result;
+  if (result.player?.nickname) return `${result.player.nickname} (${result.player.fid})`;
+  return `${entry.label || 'Player'} (${entry.fid})`;
+}
+
+function summarizeResult(entry) {
+  const result = entry.result;
+  if (entry.skipped) return `${entry.label || 'Player'} (${entry.fid}): SKIPPED (${entry.reason})`;
+  return `${resultPlayerLabel(entry)}: ${result.status || 'UNKNOWN'}${result.message ? ` (${result.message})` : ''}`;
+}
+
+function countByStatus(results) {
+  const counts = {};
+  for (const entry of results) {
+    const status = entry.skipped ? 'SKIPPED_ALREADY_RECORDED' : entry.result.status || 'UNKNOWN';
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  return counts;
+}
+
+function buildSummary(source, code, results, skippedBefore, abortedStatus) {
+  const statusCounts = countByStatus(results);
+  const successCount = results.filter((entry) => !entry.skipped && SUCCESS_OR_ACCEPTED.has(entry.result.status)).length;
+  const processed = results.filter((entry) => !entry.skipped).length;
+  const skipped = results.filter((entry) => entry.skipped).length + skippedBefore;
+
+  const statusLines = Object.entries(statusCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([status, count]) => `${status}: ${count}`)
+    .join('\n');
+
+  const details = results.slice(-30).map(summarizeResult).join('\n');
+  const abortLine = abortedStatus ? `\nAborted remaining players because code returned ${abortedStatus}.` : '';
+
+  return {
+    successCount,
+    processed,
+    skipped,
+    text:
+      `Finished ${source} redeem for \`${code}\`.\n` +
+      `Accepted/successful: ${successCount}\n` +
+      `Processed: ${processed}\n` +
+      `Skipped existing: ${skipped}\n` +
+      `${abortLine}\n\n` +
+      `Status counts:\n${statusLines || 'None'}\n\n` +
+      `Recent results:\n${details || 'None'}`
+  };
 }
 
 async function sendLong(channel, text) {
@@ -44,47 +97,86 @@ async function getNotificationChannel(client, guildId) {
   return client.channels.fetch(channelId).catch(() => null);
 }
 
+async function editProgress(progressMessage, code, processed, total, skipped) {
+  if (!progressMessage || processed % 5 !== 0) return;
+  await progressMessage.edit(`Redeeming \`${code}\`: ${processed}/${total} processed, ${skipped} skipped existing...`).catch(() => null);
+}
+
 async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
   const players = listPlayers(guildId);
   const channel = await getNotificationChannel(client, guildId);
+  const code = String(codeInfo.code || '').trim();
+
+  if (!code) return { code, total: 0, processed: 0, skipped: 0, successCount: 0, results: [] };
+
+  upsertGiftCode(code, codeInfo.date, source === 'auto' ? 'api' : source, 'active');
 
   if (players.length === 0) {
-    return { code: codeInfo.code, total: 0, results: [] };
+    return { code, total: 0, processed: 0, skipped: 0, successCount: 0, results: [] };
   }
 
+  const pendingPlayers = [];
+  let skippedBefore = 0;
+  for (const player of players) {
+    if (hasGiftCodeUsage(guildId, player.fid, code)) {
+      skippedBefore++;
+    } else {
+      pendingPlayers.push(player);
+    }
+  }
+
+  let progressMessage = null;
   if (channel) {
-    const prefix = source === 'auto' ? 'New gift code found' : 'Manual redeem started';
-    await channel.send(`${prefix}: \`${codeInfo.code}\`. Redeeming for ${players.length} player(s)...`);
+    const prefix = source === 'auto' ? 'New gift code found' : source === 'gift-channel' ? 'Gift code posted' : 'Manual redeem started';
+    progressMessage = await channel.send(
+      `${prefix}: \`${code}\`. Redeeming for ${pendingPlayers.length}/${players.length} pending player(s). ${skippedBefore} already recorded.`
+    );
   }
 
   const results = [];
-  for (const player of players) {
+  let abortedStatus = null;
+
+  for (const player of pendingPlayers) {
     try {
-      const result = await redeemCode(player.fid, codeInfo.code);
-      results.push({ fid: player.fid, label: player.label, result });
+      const result = await redeemCode(player.fid, code);
+      results.push({ fid: player.fid, label: player.label || player.nickname, result });
+      recordGiftCodeUsage(guildId, player.fid, code, result);
+
+      if (ABORT_STATUSES.has(result.status)) {
+        abortedStatus = result.status;
+        updateGiftCodeStatus(code, 'invalid');
+        break;
+      }
 
       if (result.rateLimited && result.retryDelay) {
         await wait(result.retryDelay);
       }
     } catch (error) {
-      results.push({
-        fid: player.fid,
-        label: player.label,
-        result: { success: false, status: 'ERROR', message: error.message }
-      });
+      const result = { success: false, status: 'ERROR', message: error.message };
+      results.push({ fid: player.fid, label: player.label || player.nickname, result });
+      recordGiftCodeUsage(guildId, player.fid, code, result);
     }
+
+    await editProgress(progressMessage, code, results.length, pendingPlayers.length, skippedBefore);
   }
 
-  const successCount = results.filter((entry) => entry.result.success).length;
-  const lines = results.map((entry) => summarizeResult(entry.result));
-  const summary = `Finished ${source} redeem for \`${codeInfo.code}\`: ${successCount}/${results.length} successful/accepted.\n${lines.join('\n')}`;
+  if (!abortedStatus) {
+    updateGiftCodeStatus(code, 'active');
+  }
+
+  const summary = buildSummary(source, code, results, skippedBefore, abortedStatus);
+  const usageStats = getUsageStats(guildId, code);
 
   addHistory(guildId, {
-    code: codeInfo.code,
+    code,
     date: codeInfo.date,
     source,
-    total: results.length,
-    successCount,
+    total: players.length,
+    processed: summary.processed,
+    skipped: summary.skipped,
+    successCount: summary.successCount,
+    usageStats,
+    abortedStatus,
     results: results.map((entry) => ({
       fid: entry.fid,
       label: entry.label,
@@ -94,11 +186,24 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
     }))
   });
 
-  if (channel) {
-    await sendLong(channel, summary);
+  if (progressMessage) {
+    await progressMessage.edit(summary.text.slice(0, 1900)).catch(() => null);
+    if (summary.text.length > 1900) {
+      await sendLong(channel, summary.text.slice(1900));
+    }
+  } else if (channel) {
+    await sendLong(channel, summary.text);
   }
 
-  return { code: codeInfo.code, total: results.length, successCount, results };
+  return {
+    code,
+    total: players.length,
+    processed: summary.processed,
+    skipped: summary.skipped,
+    successCount: summary.successCount,
+    abortedStatus,
+    results
+  };
 }
 
 async function checkForNewCodes(client, options = {}) {

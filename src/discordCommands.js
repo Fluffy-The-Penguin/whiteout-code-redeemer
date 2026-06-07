@@ -17,6 +17,9 @@ const commands = [
     .setName('channel-set')
     .setDescription('Use this channel for auto-redeem notifications'),
   new SlashCommandBuilder()
+    .setName('gift-channel-set')
+    .setDescription('Use this channel to detect posted gift codes and auto-redeem them'),
+  new SlashCommandBuilder()
     .setName('codes')
     .setDescription('Fetch currently known gift codes'),
   new SlashCommandBuilder()

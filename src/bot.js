@@ -9,9 +9,12 @@ const { fetchPlayerInfo } = require('./redeem');
 const {
   addPlayer,
   getConfiguredGuilds,
-  getSeenCodes,
+  getGiftChannel,
+  getGuildByGiftChannel,
+  getStorageStats,
   listPlayers,
   removePlayer,
+  setGiftChannel,
   setNotifyChannel
 } = require('./storage');
 
@@ -31,6 +34,15 @@ function formatPlayers(players) {
       return `${index + 1}. \`${player.fid}\`${name ? ` - ${name}` : ''}${stove}`;
     })
     .join('\n');
+}
+
+function extractGiftCode(content) {
+  const trimmed = String(content || '').trim();
+  const prefixed = trimmed.match(/(?:code|gift\s*code)\s*[:：]\s*([a-zA-Z0-9]+)/i);
+  const candidate = prefixed ? prefixed[1] : trimmed;
+
+  if (!/^[a-zA-Z0-9]{3,32}$/.test(candidate)) return null;
+  return candidate;
 }
 
 async function handleInteraction(interaction) {
@@ -85,6 +97,12 @@ async function handleInteraction(interaction) {
     return;
   }
 
+  if (interaction.commandName === 'gift-channel-set') {
+    setGiftChannel(interaction.guildId, interaction.channelId);
+    await interaction.reply({ content: `Gift codes posted in ${interaction.channel} will be auto-redeemed for saved players.`, ephemeral: true });
+    return;
+  }
+
   if (interaction.commandName === 'codes') {
     await interaction.deferReply({ ephemeral: true });
     const { codes, invalid, fetchedAt } = await fetchGiftCodes();
@@ -111,20 +129,51 @@ async function handleInteraction(interaction) {
 
   if (interaction.commandName === 'watch-status') {
     const guilds = getConfiguredGuilds();
-    const seenCount = Object.keys(getSeenCodes()).length;
+    const stats = getStorageStats(interaction.guildId);
     const players = listPlayers(interaction.guildId);
+    const giftChannel = getGiftChannel(interaction.guildId);
     await interaction.reply({
-      content: `Watcher is running. This server has ${players.length} player(s). Stored seen codes: ${seenCount}. Configured guilds: ${guilds.length}.`,
+      content:
+        `Watcher is running.\n` +
+        `Players in this server: ${players.length}\n` +
+        `Stored seen codes: ${stats.seenCodes}\n` +
+        `Usage records for this server: ${stats.usage}\n` +
+        `Configured guilds: ${guilds.length}\n` +
+        `Gift-code channel: ${giftChannel ? `<#${giftChannel}>` : 'not set'}`,
       ephemeral: true
     });
   }
+}
+
+async function handleGiftCodeMessage(message) {
+  if (message.author.bot || !message.guildId) return;
+
+  const configured = getGuildByGiftChannel(message.channelId);
+  if (!configured || configured.guild_id !== message.guildId) return;
+
+  const code = extractGiftCode(message.content);
+  if (!code) return;
+
+  const players = listPlayers(message.guildId);
+  if (players.length === 0) {
+    await message.reply('Gift code detected, but no players are saved. Add players with `/player-add` first.').catch(() => null);
+    return;
+  }
+
+  await redeemCodeForGuild(message.client, message.guildId, { code, date: new Date().toISOString().slice(0, 10) }, 'gift-channel');
 }
 
 async function startBot(options = {}) {
   const token = process.env.DISCORD_TOKEN;
   if (!token) throw new Error('DISCORD_TOKEN is required.');
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ]
+  });
   let watcherStarted = false;
 
   client.once('ready', async () => {
@@ -155,6 +204,12 @@ async function startBot(options = {}) {
     });
   });
 
+  client.on('messageCreate', (message) => {
+    handleGiftCodeMessage(message).catch((error) => {
+      console.error(`Gift-code message error: ${error.message}`);
+    });
+  });
+
   await client.login(token);
   return client;
 }
@@ -167,5 +222,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  extractGiftCode,
   startBot
 };

@@ -60,6 +60,7 @@ Discord commands:
 
 ```text
 /channel-set
+/gift-channel-set
 /player-add fid:12345678 label:Main
 /player-remove fid:12345678
 /players
@@ -72,10 +73,14 @@ Automatic behavior:
 
 - The bot checks the central code API every 5-10 minutes by default.
 - `/player-add` verifies the FID immediately and stores the player's nickname and furnace level.
+- `/gift-channel-set` makes the current channel listen for posted gift codes like `Code: gogoWOS` or `gogoWOS`.
 - On first startup, it records existing codes and waits for future new codes.
 - When a new code appears later, it redeems that code for every saved player in each configured server.
+- It stores every code/player result and skips already-recorded player/code pairs next time.
+- If a code returns `USED`, `TIME ERROR`, or `CDK NOT FOUND`, it stops redeeming that code for remaining players.
 - Results are posted in the channel set by `/channel-set`.
-- Saved players and seen codes are stored locally in `data/state.json`.
+- Saved players, seen codes, usage records, and history are stored locally in `data/bot.sqlite`.
+- Enable `Message Content Intent` in the Discord Developer Portal if you want gift-channel message detection to work.
 
 If you want the bot to redeem existing fetched codes on first startup too, set this in `.env`:
 
