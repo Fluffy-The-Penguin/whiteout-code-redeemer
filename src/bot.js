@@ -4,6 +4,7 @@ const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js')
 const { fetchGiftCodes } = require('./codeFetcher');
 const { redeemCodeForGuild, startWatcher } = require('./autoRedeemer');
 const { deployGlobalCommands } = require('./deployCommands');
+const { getFurnaceLabel } = require('./furnaceReadable');
 const { fetchPlayerInfo } = require('./redeem');
 const {
   addPlayer,
@@ -26,7 +27,7 @@ function formatPlayers(players) {
   return players
     .map((player, index) => {
       const name = player.nickname || player.label || '';
-      const stove = player.stoveLv ? `, Furnace ${player.stoveLv}` : '';
+      const stove = player.stoveLv ? `, ${getFurnaceLabel(player.stoveLv)}` : '';
       return `${index + 1}. \`${player.fid}\`${name ? ` - ${name}` : ''}${stove}`;
     })
     .join('\n');
@@ -61,7 +62,7 @@ async function handleInteraction(interaction) {
 
     const { created } = addPlayer(interaction.guildId, fid, label || info.nickname, info);
     await interaction.editReply(
-      `${created ? 'Added' : 'Updated'} player \`${fid}\`: ${info.nickname}, Furnace ${info.stoveLv}.`
+      `${created ? 'Added' : 'Updated'} player \`${fid}\`: ${info.nickname}, ${getFurnaceLabel(info.stoveLv)}.`
     );
     return;
   }

@@ -9,7 +9,7 @@
     "deploy-commands": "node src/deployCommands.js",
     "redeem": "node src/cli.js",
     "codes": "node src/cli.js codes",
-    "check": "node --check index.js && node --check src/cli.js && node --check src/bot.js && node --check src/deployCommands.js && node --check src/discordCommands.js && node --check src/storage.js && node --check src/autoRedeemer.js && node --check src/redeem.js && node --check src/apiClient.js && node --check src/codeFetcher.js && node --check src/captchaSolver.js && node --check src/config.js"
+    "check": "node --check index.js && node --check src/cli.js && node --check src/bot.js && node --check src/deployCommands.js && node --check src/discordCommands.js && node --check src/storage.js && node --check src/autoRedeemer.js && node --check src/redeem.js && node --check src/apiClient.js && node --check src/codeFetcher.js && node --check src/captchaSolver.js && node --check src/furnaceReadable.js && node --check src/config.js"
   },
   "dependencies": {
     "discord.js": "^14.25.1",
