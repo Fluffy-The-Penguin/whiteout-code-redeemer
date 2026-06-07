@@ -20,6 +20,9 @@ const commands = [
     .setName('gift-channel-set')
     .setDescription('Use this channel to detect posted gift codes and auto-redeem them'),
   new SlashCommandBuilder()
+    .setName('id-channel-set')
+    .setDescription('Use this channel to detect posted player IDs and save them'),
+  new SlashCommandBuilder()
     .setName('codes')
     .setDescription('Fetch currently known gift codes'),
   new SlashCommandBuilder()

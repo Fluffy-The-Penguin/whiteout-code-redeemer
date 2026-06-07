@@ -23,6 +23,7 @@ db.exec(`
     guild_id TEXT PRIMARY KEY,
     notify_channel_id TEXT,
     gift_channel_id TEXT,
+    id_channel_id TEXT,
     updated_at TEXT NOT NULL
   );
 
@@ -77,6 +78,15 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+function ensureColumn(tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (!columns.some((column) => column.name === columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+ensureColumn('guild_settings', 'id_channel_id', 'TEXT');
 
 function nowIso() {
   return new Date().toISOString();
@@ -214,9 +224,24 @@ function getGuildByGiftChannel(channelId) {
   return db.prepare('SELECT guild_id, gift_channel_id FROM guild_settings WHERE gift_channel_id = ?').get(String(channelId)) || null;
 }
 
+function setIdChannel(guildId, channelId) {
+  ensureGuildSettings(guildId);
+  db.prepare('UPDATE guild_settings SET id_channel_id = ?, updated_at = ? WHERE guild_id = ?')
+    .run(String(channelId), nowIso(), String(guildId));
+}
+
+function getIdChannel(guildId) {
+  ensureGuildSettings(guildId);
+  return db.prepare('SELECT id_channel_id FROM guild_settings WHERE guild_id = ?').get(String(guildId))?.id_channel_id || null;
+}
+
+function getGuildByIdChannel(channelId) {
+  return db.prepare('SELECT guild_id, id_channel_id FROM guild_settings WHERE id_channel_id = ?').get(String(channelId)) || null;
+}
+
 function getConfiguredGuilds() {
   return db.prepare(`
-    SELECT gs.guild_id, gs.notify_channel_id, gs.gift_channel_id, COUNT(p.fid) AS player_count
+    SELECT gs.guild_id, gs.notify_channel_id, gs.gift_channel_id, gs.id_channel_id, COUNT(p.fid) AS player_count
     FROM guild_settings gs
     JOIN players p ON p.guild_id = gs.guild_id
     GROUP BY gs.guild_id
@@ -225,6 +250,7 @@ function getConfiguredGuilds() {
     guildId: row.guild_id,
     notifyChannelId: row.notify_channel_id,
     giftChannelId: row.gift_channel_id,
+    idChannelId: row.id_channel_id,
     players: listPlayers(row.guild_id)
   }));
 }
@@ -333,7 +359,9 @@ module.exports = {
   getConfiguredGuilds,
   getGiftChannel,
   getGiftCode,
+  getGuildByIdChannel,
   getGuildByGiftChannel,
+  getIdChannel,
   getNotifyChannel,
   getSeenCodes,
   getStorageStats,
@@ -344,6 +372,7 @@ module.exports = {
   recordGiftCodeUsage,
   removePlayer,
   setGiftChannel,
+  setIdChannel,
   setNotifyChannel,
   updateGiftCodeStatus,
   upsertGiftCode

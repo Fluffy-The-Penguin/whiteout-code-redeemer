@@ -11,10 +11,13 @@ const {
   getConfiguredGuilds,
   getGiftChannel,
   getGuildByGiftChannel,
+  getGuildByIdChannel,
+  getIdChannel,
   getStorageStats,
   listPlayers,
   removePlayer,
   setGiftChannel,
+  setIdChannel,
   setNotifyChannel
 } = require('./storage');
 
@@ -43,6 +46,11 @@ function extractGiftCode(content) {
 
   if (!/^[a-zA-Z0-9]{3,32}$/.test(candidate)) return null;
   return candidate;
+}
+
+function extractPlayerIds(content) {
+  const matches = String(content || '').match(/\b\d{5,12}\b/g) || [];
+  return [...new Set(matches)].slice(0, 30);
 }
 
 async function handleInteraction(interaction) {
@@ -103,6 +111,12 @@ async function handleInteraction(interaction) {
     return;
   }
 
+  if (interaction.commandName === 'id-channel-set') {
+    setIdChannel(interaction.guildId, interaction.channelId);
+    await interaction.reply({ content: `Player IDs posted in ${interaction.channel} will be validated and saved automatically.`, ephemeral: true });
+    return;
+  }
+
   if (interaction.commandName === 'codes') {
     await interaction.deferReply({ ephemeral: true });
     const { codes, invalid, fetchedAt } = await fetchGiftCodes();
@@ -132,6 +146,7 @@ async function handleInteraction(interaction) {
     const stats = getStorageStats(interaction.guildId);
     const players = listPlayers(interaction.guildId);
     const giftChannel = getGiftChannel(interaction.guildId);
+    const idChannel = getIdChannel(interaction.guildId);
     await interaction.reply({
       content:
         `Watcher is running.\n` +
@@ -139,10 +154,66 @@ async function handleInteraction(interaction) {
         `Stored seen codes: ${stats.seenCodes}\n` +
         `Usage records for this server: ${stats.usage}\n` +
         `Configured guilds: ${guilds.length}\n` +
-        `Gift-code channel: ${giftChannel ? `<#${giftChannel}>` : 'not set'}`,
+        `Gift-code channel: ${giftChannel ? `<#${giftChannel}>` : 'not set'}\n` +
+        `ID channel: ${idChannel ? `<#${idChannel}>` : 'not set'}`,
       ephemeral: true
     });
   }
+}
+
+async function editIdProgress(progressMessage, processed, total) {
+  if (!progressMessage || processed % 5 !== 0) return;
+  await progressMessage.edit(`Checking player IDs: ${processed}/${total} processed...`).catch(() => null);
+}
+
+async function handleIdChannelMessage(message) {
+  if (message.author.bot || !message.guildId) return false;
+
+  const configured = getGuildByIdChannel(message.channelId);
+  if (!configured || configured.guild_id !== message.guildId) return false;
+
+  const ids = extractPlayerIds(message.content);
+  if (ids.length === 0) return true;
+
+  const progressMessage = await message.reply(`Checking ${ids.length} player ID(s)...`).catch(() => null);
+  const added = [];
+  const updated = [];
+  const failed = [];
+
+  for (const fid of ids) {
+    try {
+      const info = await fetchPlayerInfo(fid);
+      if (!info.success) {
+        failed.push(`${fid}: ${info.status}`);
+      } else {
+        const result = addPlayer(message.guildId, fid, info.nickname, info, message.author.id);
+        const line = `${fid}: ${info.nickname}, ${getFurnaceLabel(info.stoveLv)}`;
+        if (result.created) added.push(line);
+        else updated.push(line);
+      }
+    } catch (error) {
+      failed.push(`${fid}: ${error.message}`);
+    }
+
+    await editIdProgress(progressMessage, added.length + updated.length + failed.length, ids.length);
+  }
+
+  const summary =
+    `Finished checking player IDs.\n` +
+    `Added: ${added.length}\n` +
+    `Updated: ${updated.length}\n` +
+    `Failed: ${failed.length}\n\n` +
+    `${added.length ? `Added:\n${added.slice(0, 15).join('\n')}\n\n` : ''}` +
+    `${updated.length ? `Updated:\n${updated.slice(0, 15).join('\n')}\n\n` : ''}` +
+    `${failed.length ? `Failed:\n${failed.slice(0, 15).join('\n')}` : ''}`;
+
+  if (progressMessage) {
+    await progressMessage.edit(summary.slice(0, 1900)).catch(() => null);
+  } else {
+    await message.reply(summary.slice(0, 1900)).catch(() => null);
+  }
+
+  return true;
 }
 
 async function handleGiftCodeMessage(message) {
@@ -205,8 +276,13 @@ async function startBot(options = {}) {
   });
 
   client.on('messageCreate', (message) => {
-    handleGiftCodeMessage(message).catch((error) => {
-      console.error(`Gift-code message error: ${error.message}`);
+    Promise.resolve()
+      .then(async () => {
+        if (await handleIdChannelMessage(message)) return;
+        await handleGiftCodeMessage(message);
+      })
+      .catch((error) => {
+        console.error(`Message handler error: ${error.message}`);
     });
   });
 
@@ -223,5 +299,6 @@ if (require.main === module) {
 
 module.exports = {
   extractGiftCode,
+  extractPlayerIds,
   startBot
 };
