@@ -1,0 +1,20 @@
+{
+  "name": "whiteout-code-redeemer",
+  "version": "0.1.0",
+  "description": "Minimal Whiteout Survival gift-code redeemer CLI.",
+  "main": "src/cli.js",
+  "scripts": {
+    "bot": "node src/bot.js",
+    "deploy-commands": "node src/deployCommands.js",
+    "redeem": "node src/cli.js",
+    "codes": "node src/cli.js codes",
+    "check": "node --check src/cli.js && node --check src/bot.js && node --check src/deployCommands.js && node --check src/discordCommands.js && node --check src/storage.js && node --check src/autoRedeemer.js && node --check src/redeem.js && node --check src/apiClient.js && node --check src/codeFetcher.js && node --check src/captchaSolver.js && node --check src/config.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.3.1",
+    "onnxruntime-node": "^1.23.2",
+    "sharp": "^0.32.0"
+  },
+  "license": "MIT"
+}
