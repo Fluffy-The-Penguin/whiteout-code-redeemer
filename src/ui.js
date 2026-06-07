@@ -76,6 +76,23 @@ function statusCountLines(statusCounts) {
   return entries.map(([status, count]) => `**${status}**: ${count}`).join('\n');
 }
 
+function categoryCountLines(categoryCounts) {
+  const order = [
+    'Redeemed',
+    'Already Redeemed',
+    'Restricted',
+    'Invalid/Expired',
+    'Rate Limited',
+    'Unsuccessful',
+    'Skipped Existing'
+  ];
+
+  return order
+    .filter((name) => Number(categoryCounts?.[name] || 0) > 0 || name === 'Redeemed' || name === 'Already Redeemed' || name === 'Unsuccessful')
+    .map((name) => `**${name}**: ${Number(categoryCounts?.[name] || 0)}`)
+    .join('\n');
+}
+
 function redeemStartEmbed({ source, code, pending, total, skipped }) {
   return createEmbed({
     title: redeemSourceLabel(source),
@@ -102,7 +119,7 @@ function redeemProgressEmbed({ code, processed, total, skipped }) {
   });
 }
 
-function redeemSummaryEmbed({ source, code, total, processed, skipped, successCount, abortedStatus, statusCounts, recentLines }) {
+function redeemSummaryEmbed({ source, code, total, processed, skipped, successCount, abortedStatus, statusCounts, categoryCounts, recentLines }) {
   const color = abortedStatus ? COLORS.warning : COLORS.success;
   return createEmbed({
     title: `${redeemSourceLabel(source)} Complete`,
@@ -111,11 +128,16 @@ function redeemSummaryEmbed({ source, code, total, processed, skipped, successCo
       : `Finished redeeming \`${code}\`.`,
     color,
     fields: [
-      { name: 'Accepted/Successful', value: String(successCount), inline: true },
-      { name: 'Processed', value: String(processed), inline: true },
+      { name: 'Redeemed', value: String(categoryCounts?.Redeemed || 0), inline: true },
+      { name: 'Already Redeemed', value: String(categoryCounts?.['Already Redeemed'] || 0), inline: true },
+      { name: 'Unsuccessful', value: String(categoryCounts?.Unsuccessful || 0), inline: true },
+      { name: 'Restricted', value: String(categoryCounts?.Restricted || 0), inline: true },
+      { name: 'Invalid/Expired', value: String(categoryCounts?.['Invalid/Expired'] || 0), inline: true },
       { name: 'Skipped Existing', value: String(skipped), inline: true },
+      { name: 'Processed', value: String(processed), inline: true },
       { name: 'Saved Players', value: String(total), inline: true },
-      { name: 'Status Counts', value: statusCountLines(statusCounts), inline: false },
+      { name: 'Result Overview', value: categoryCountLines(categoryCounts), inline: false },
+      { name: 'Raw API Statuses', value: statusCountLines(statusCounts), inline: false },
       { name: 'Recent Results', value: listOrNone(recentLines, 12), inline: false }
     ]
   });

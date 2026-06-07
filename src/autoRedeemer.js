@@ -17,6 +17,9 @@ const { redeemProgressEmbed, redeemStartEmbed, redeemSummaryEmbed } = require('.
 
 const ABORT_STATUSES = new Set(['USED', 'TIME ERROR', 'CDK NOT FOUND']);
 const SUCCESS_OR_ACCEPTED = new Set(['SUCCESS', 'RECEIVED', 'SAME TYPE EXCHANGE']);
+const ALREADY_REDEEMED_STATUSES = new Set(['RECEIVED', 'SAME TYPE EXCHANGE']);
+const RESTRICTED_STATUSES = new Set(['STOVE_LV ERROR', 'RECHARGE_MONEY ERROR', 'RECHARGE_MONEY_VIP ERROR']);
+const RATE_LIMIT_STATUSES = new Set(['CAPTCHA GET TOO FREQUENT', 'CAPTCHA CHECK TOO FREQUENT', 'TIMEOUT RETRY', 'HTTP_429']);
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,10 +37,24 @@ function resultPlayerLabel(entry) {
   return `${entry.label || 'Player'} (${entry.fid})`;
 }
 
+function categorizeEntry(entry) {
+  if (entry.skipped) return 'Skipped Existing';
+
+  const status = entry.result?.status || 'UNKNOWN';
+  if (status === 'SUCCESS') return 'Redeemed';
+  if (ALREADY_REDEEMED_STATUSES.has(status)) return 'Already Redeemed';
+  if (RESTRICTED_STATUSES.has(status)) return 'Restricted';
+  if (ABORT_STATUSES.has(status)) return 'Invalid/Expired';
+  if (RATE_LIMIT_STATUSES.has(status) || entry.result?.rateLimited) return 'Rate Limited';
+
+  return 'Unsuccessful';
+}
+
 function summarizeResult(entry) {
   const result = entry.result;
-  if (entry.skipped) return `${entry.label || 'Player'} (${entry.fid}): SKIPPED (${entry.reason})`;
-  return `${resultPlayerLabel(entry)}: ${result.status || 'UNKNOWN'}${result.message ? ` (${result.message})` : ''}`;
+  const category = categorizeEntry(entry);
+  if (entry.skipped) return `${resultPlayerLabel(entry)}: ${category}`;
+  return `${resultPlayerLabel(entry)}: ${category} - ${result.status || 'UNKNOWN'}${result.message ? ` (${result.message})` : ''}`;
 }
 
 function countByStatus(results) {
@@ -51,6 +68,21 @@ function countByStatus(results) {
 
 function buildSummary(source, code, results, skippedBefore, abortedStatus) {
   const statusCounts = countByStatus(results);
+  const categoryCounts = {
+    Redeemed: 0,
+    'Already Redeemed': 0,
+    Restricted: 0,
+    'Invalid/Expired': 0,
+    'Rate Limited': 0,
+    Unsuccessful: 0,
+    'Skipped Existing': skippedBefore
+  };
+
+  for (const entry of results) {
+    const category = categorizeEntry(entry);
+    categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+  }
+
   const successCount = results.filter((entry) => !entry.skipped && SUCCESS_OR_ACCEPTED.has(entry.result.status)).length;
   const processed = results.filter((entry) => !entry.skipped).length;
   const skipped = results.filter((entry) => entry.skipped).length + skippedBefore;
@@ -68,6 +100,7 @@ function buildSummary(source, code, results, skippedBefore, abortedStatus) {
     processed,
     skipped,
     statusCounts,
+    categoryCounts,
     recentLines: results.slice(-30).map(summarizeResult),
     text:
       `Finished ${source} redeem for \`${code}\`.\n` +
@@ -177,6 +210,7 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
     processed: summary.processed,
     skipped: summary.skipped,
     successCount: summary.successCount,
+    categoryCounts: summary.categoryCounts,
     usageStats,
     abortedStatus,
     results: results.map((entry) => ({
@@ -199,6 +233,7 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
         successCount: summary.successCount,
         abortedStatus,
         statusCounts: summary.statusCounts,
+        categoryCounts: summary.categoryCounts,
         recentLines: summary.recentLines
       })]
     }).catch(() => null);
@@ -212,6 +247,7 @@ async function redeemCodeForGuild(client, guildId, codeInfo, source = 'auto') {
     processed: summary.processed,
     skipped: summary.skipped,
     successCount: summary.successCount,
+    categoryCounts: summary.categoryCounts,
     abortedStatus,
     results
   };

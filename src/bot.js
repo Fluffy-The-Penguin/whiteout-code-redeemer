@@ -182,9 +182,13 @@ async function handleInteraction(interaction) {
     const summary = await redeemCodeForGuild(interaction.client, interaction.guildId, { code, date: new Date().toISOString().slice(0, 10) }, 'manual');
     await interaction.editReply({
       embeds: [successEmbed('Manual Redeem Complete', `Finished redeeming \`${code}\`.`, [
-        { name: 'Accepted/Successful', value: String(summary.successCount), inline: true },
-        { name: 'Saved Players', value: String(summary.total), inline: true },
+        { name: 'Redeemed', value: String(summary.categoryCounts?.Redeemed || 0), inline: true },
+        { name: 'Already Redeemed', value: String(summary.categoryCounts?.['Already Redeemed'] || 0), inline: true },
+        { name: 'Unsuccessful', value: String(summary.categoryCounts?.Unsuccessful || 0), inline: true },
+        { name: 'Restricted', value: String(summary.categoryCounts?.Restricted || 0), inline: true },
+        { name: 'Invalid/Expired', value: String(summary.categoryCounts?.['Invalid/Expired'] || 0), inline: true },
         { name: 'Skipped Existing', value: String(summary.skipped), inline: true },
+        { name: 'Saved Players', value: String(summary.total), inline: true },
         { name: 'Results', value: 'Full results are posted in the configured notification channel if set.', inline: false }
       ])]
     });
