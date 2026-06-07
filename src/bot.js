@@ -3,6 +3,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
 const { fetchGiftCodes } = require('./codeFetcher');
 const { redeemCodeForGuild, startWatcher } = require('./autoRedeemer');
+const { deployGlobalCommands } = require('./deployCommands');
 const { fetchPlayerInfo } = require('./redeem');
 const {
   addPlayer,
@@ -118,14 +119,26 @@ async function handleInteraction(interaction) {
   }
 }
 
-async function main() {
+async function startBot(options = {}) {
   const token = process.env.DISCORD_TOKEN;
-  if (!token) throw new Error('DISCORD_TOKEN is required. Create .env from .env.example.');
+  if (!token) throw new Error('DISCORD_TOKEN is required.');
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  let watcherStarted = false;
 
-  client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}. Starting automatic code watcher.`);
+  client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}.`);
+
+    if (options.deployCommands !== false) {
+      await deployGlobalCommands({
+        token,
+        clientId: process.env.DISCORD_CLIENT_ID || client.application?.id || client.user.id
+      });
+    }
+
+    if (watcherStarted) return;
+    watcherStarted = true;
+    console.log('Starting automatic code watcher.');
     startWatcher(client);
   });
 
@@ -142,9 +155,16 @@ async function main() {
   });
 
   await client.login(token);
+  return client;
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  startBot({ deployCommands: true }).catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  startBot
+};

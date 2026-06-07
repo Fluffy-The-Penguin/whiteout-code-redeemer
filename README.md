@@ -18,25 +18,42 @@ npm install
 
 ## Discord Auto Redeem Bot
 
-Create `.env` from `.env.example` and fill in your Discord bot values:
+Create `.env` from `.env.example` and fill in your Discord bot token:
 
 ```bash
 DISCORD_TOKEN=your_bot_token_here
-DISCORD_CLIENT_ID=your_application_client_id_here
 ```
 
-Register global slash commands:
+Start the bot. This deploys global slash commands automatically, then starts the auto-redeem watcher:
 
 ```bash
-npm run deploy-commands
+npm start
 ```
 
-Global Discord commands can take some time to appear after deployment.
+Global Discord commands can take some time to appear after the first startup.
 
-Start the bot:
+## Server Panel Setup
 
-```bash
-npm run bot
+Use GitHub repo deployment and set only this as the bot file:
+
+```text
+BOT JS FILE: index.js
+```
+
+You do not need a start bash file. `index.js` handles command deployment and starts the bot watcher.
+
+Required environment variable:
+
+```text
+DISCORD_TOKEN=your_bot_token_here
+```
+
+Optional environment variables:
+
+```text
+CHECK_INTERVAL_MIN_MS=300000
+CHECK_INTERVAL_MAX_MS=600000
+REDEEM_EXISTING_ON_START=false
 ```
 
 Discord commands:
